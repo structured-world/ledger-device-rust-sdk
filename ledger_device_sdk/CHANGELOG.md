@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `nvm`: `AtomicStorage::get_or_init` returns the stored value, first storing
   the given one if the storage was never updated (both validity flags clear, as
   in the zeroed `.nvm_data` Speculos loads), where `get_ref` panics.
+- `app_io_stack` feature: the app runs the C SDK's USB/BLE IO stack itself instead of
+  the OS one (the C SDK's `DISABLE_OS_IO_STACK_USE`), for apps that drive an interface
+  such as U2F/CTAPHID themselves. `exit_app` stops that stack before leaving.
 
 ### Fixed
 - `nvm`: `AtomicStorage::update` on a storage that was never updated stores the
