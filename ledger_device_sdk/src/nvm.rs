@@ -474,6 +474,8 @@ mod tests {
     fn atomic_storage_reads_and_updates_zeroed_nvm() {
         let pointer = &raw mut NEVER_UPDATED;
         let storage = unsafe { (*pointer).get_mut() };
+        storage.storage_a.invalidate();
+        storage.storage_b.invalidate();
         assert_eq!(*storage.get_ref(), [0; 4]);
         storage.update(&[1, 2, 3, 4]);
         assert_eq!(*storage.get_ref(), [1, 2, 3, 4]);
