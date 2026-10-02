@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CRC-checked area at the start of the app data, meant to be kept by the OS across app
   updates), with its size set by the `APP_STORAGE_SIZE` environment variable and its
   header properties by the `app_storage_settings` and `app_storage_data` features.
+- `io_new`: `Comm::next_command_or_event` waits for one event and returns either an
+  application command, handled exactly as `next_command` handles it (BOLOS APDUs and
+  unexpected classes are answered internally), or the event itself, so an application
+  can run periodic work on ticker events between commands.
 
 ## [1.38.0] - 2026-09-29
 
