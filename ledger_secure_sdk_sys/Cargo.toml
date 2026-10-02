@@ -27,6 +27,13 @@ mldsa_optimization = ["mldsa"]
 # Run the IO stack (USB classes, BLE, NFC) in the application instead of the OS, as
 # DISABLE_OS_IO_STACK_USE does for C applications: the build drops USE_OS_IO_STACK.
 app_io_stack = []
+# Application storage (C SDK lib_standard_app/app_storage.c): a versioned, CRC-checked region
+# at the start of the app data, meant for the OS to keep across app updates. Its size comes
+# from the APP_STORAGE_SIZE environment variable (default 480 bytes).
+app_storage = []
+# Mark the storage as holding settings / application data (header properties).
+app_storage_settings = ["app_storage"]
+app_storage_data = ["app_storage"]
 
 [lints.rust.unexpected_cfgs]
 level = "warn"
