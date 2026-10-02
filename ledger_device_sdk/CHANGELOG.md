@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `app_io_stack` feature: the app runs the C SDK's USB/BLE IO stack itself instead of
   the OS one (the C SDK's `DISABLE_OS_IO_STACK_USE`), for apps that drive an interface
   such as U2F/CTAPHID themselves. `exit_app` stops that stack before leaving.
+- `app_storage` feature and module: the C SDK's application storage (a versioned,
+  CRC-checked area at the start of the app data, meant to be kept by the OS across app
+  updates), with its size set by the `APP_STORAGE_SIZE` environment variable and its
+  header properties by the `app_storage_settings` and `app_storage_data` features.
 
 ## [1.38.0] - 2026-09-29
 

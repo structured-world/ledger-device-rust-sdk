@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `app_io_stack` feature: build without `USE_OS_IO_STACK`, so the app runs the C SDK's
   USB/BLE IO stack itself (the C SDK's `DISABLE_OS_IO_STACK_USE`); `os_io.o` is always
   linked in that mode instead of the weak syscall stubs
+- `app_storage` feature: compile the C SDK's `lib_standard_app/app_storage.c` with its size
+  from the `APP_STORAGE_SIZE` environment variable (default 480) and the SETTINGS/DATA
+  header properties from the `app_storage_settings` / `app_storage_data` features, bind
+  `include/app_storage.h`, and initialize the storage at startup
+- `.storage_section` in link.ld, at the start of the app data region as in the C SDK;
+  empty without the feature
 
 ### Changed
 - `exit_app` stops the app's IO stack (`os_io_stop`) before `os_sched_exit` with
