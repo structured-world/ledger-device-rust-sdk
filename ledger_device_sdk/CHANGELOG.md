@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unexpected classes are answered internally), or the event itself, so an application
   can run periodic work on ticker events between commands.
 
+### Fixed
+- `nvm`: an `AtomicStorage` whose two validity flags are both clear, as in the
+  zeroed `.nvm_data` Speculos loads, reads as zeroes and takes updates instead
+  of panicking with "invalidated atomic storage". An interrupted update never
+  clears both flags, so this state only means the storage was never updated.
+
 ## [1.38.0] - 2026-09-29
 
 ### Changed
