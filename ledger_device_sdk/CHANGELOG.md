@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `nvm`: `AtomicStorage::get_or_init` returns the stored value, first storing
   the given one if the storage was never updated (both validity flags clear, as
   in the zeroed `.nvm_data` Speculos loads), where `get_ref` panics.
+- `io_new`: `Comm::next_command_or_event` waits for one event and returns either an
+  application command, handled exactly as `next_command` handles it (BOLOS APDUs and
+  unexpected classes are answered internally), or the event itself, so an application
+  can run periodic work on ticker events between commands.
 
 ### Fixed
 - `nvm`: `AtomicStorage::update` on a storage that was never updated stores the
