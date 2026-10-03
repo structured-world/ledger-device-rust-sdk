@@ -211,20 +211,62 @@ where
         }
     }
 
-    /// Returns which storage contains the latest valid data.
+    /// Makes the storage that is not current hold the current value, so the value the last
+    /// update replaced leaves no trace in NVM; writes only when the two differ.
     ///
-    /// # Panics
-    ///
-    /// Panics if both storage elements are invalid (data corrupton),
-    /// although data corruption shall not be possible with tearing.
-    fn which(&self) -> AtomicStorageElem {
-        if self.storage_a.is_valid() {
-            StorageA
+    /// An update writes the other storage and then invalidates the current one, whose bytes
+    /// stay. Writing twice clears them, but a power loss between the two writes leaves them for
+    /// good, so an application storing secrets calls this at start to finish such a write.
+    /// A storage that was never updated is left as it is.
+    pub fn settle(&mut self) {
+        let (current, other) = if self.storage_a.is_valid() {
+            (&self.storage_a, &self.storage_b)
         } else if self.storage_b.is_valid() {
-            StorageB
+            (&self.storage_b, &self.storage_a)
         } else {
-            panic!("invalidated atomic storage");
+            return;
+        };
+        let size = core::mem::size_of::<T>();
+        // SAFETY: both point to a `T`, read as its `size` bytes; `T: Copy` holds no pointer to
+        // follow, and the bytes are only compared.
+        let (current_bytes, other_bytes) = unsafe {
+            (
+                core::slice::from_raw_parts(current.value.get_ref() as *const T as *const u8, size),
+                core::slice::from_raw_parts(other.value.get_ref() as *const T as *const u8, size),
+            )
+        };
+        if current_bytes == other_bytes {
+            return;
         }
+        // Writing the current value again lands it in the other storage, which becomes current;
+        // the one invalidated holds the same value.
+        let value = *current.value.get_ref();
+        self.update(&value);
+    }
+
+    /// Returns which storage contains the latest data, or `None` when neither is valid.
+    ///
+    /// An interrupted update never leaves both storages invalid, so neither being valid means
+    /// the storage was never updated and its section was loaded zeroed (Speculos zeroes
+    /// `.nvm_data`).
+    fn which(&self) -> Option<AtomicStorageElem> {
+        if self.storage_a.is_valid() {
+            Some(StorageA)
+        } else if self.storage_b.is_valid() {
+            Some(StorageB)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the stored value, first storing `init` if the storage was never updated (both
+    /// validity flags clear, as in the zeroed `.nvm_data` Speculos loads). Use it where
+    /// [`SingleStorage::get_ref`] would panic on such a storage.
+    pub fn get_or_init(&mut self, init: &T) -> &T {
+        if self.which().is_none() {
+            self.update(init);
+        }
+        self.get_ref()
     }
 }
 
@@ -233,22 +275,29 @@ where
     T: Copy,
 {
     /// Return reference to the stored value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the storage was never updated: its zeroed bytes are not a valid `T` for every
+    /// type. [`AtomicStorage::get_or_init`] stores a value first instead.
     fn get_ref(&self) -> &T {
         match self.which() {
-            StorageA => self.storage_a.get_ref(),
-            StorageB => self.storage_b.get_ref(),
+            Some(StorageA) => self.storage_a.get_ref(),
+            Some(StorageB) => self.storage_b.get_ref(),
+            None => panic!("invalidated atomic storage"),
         }
     }
 
-    /// Update the value by writing to the NVM memory.
+    /// Update the value by writing to the NVM memory. A storage that was never updated takes
+    /// the value as well.
     /// Warning: this can be vulnerable to tearing - leading to partial write.
     fn update(&mut self, value: &T) {
         match self.which() {
-            StorageA => {
+            Some(StorageA) | None => {
                 self.storage_b.update(value);
                 self.storage_a.invalidate();
             }
-            StorageB => {
+            Some(StorageB) => {
                 self.storage_a.update(value);
                 self.storage_b.invalidate();
             }
@@ -453,5 +502,73 @@ where
                 return Some(self.container.slots[self.next_key - 1].get_ref());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AtomicStorage, SingleStorage};
+    use crate::NVMData;
+    use crate::assert_eq_err as assert_eq;
+    use crate::testing::TestType;
+    use testmacro::test_item as test;
+
+    #[unsafe(link_section = ".nvm_data")]
+    static mut NEVER_UPDATED: NVMData<AtomicStorage<[u8; 4]>> =
+        NVMData::new(AtomicStorage::new(&[0; 4]));
+
+    // An application started from a zeroed `.nvm_data`, as Speculos loads it for applications,
+    // finds both validity flags of a storage it never updated clear: `get_or_init` stores the
+    // initial value instead of exposing the zeroed bytes, and later calls keep what was
+    // stored. The flags are cleared here explicitly, so the test does not depend on how the
+    // test binary was loaded.
+    #[test]
+    fn atomic_storage_initializes_zeroed_nvm() {
+        let pointer = &raw mut NEVER_UPDATED;
+        let storage = unsafe { (*pointer).get_mut() };
+        storage.storage_a.invalidate();
+        storage.storage_b.invalidate();
+        assert_eq!(*storage.get_or_init(&[7; 4]), [7; 4]);
+        assert_eq!(*storage.get_ref(), [7; 4]);
+        storage.update(&[1, 2, 3, 4]);
+        assert_eq!(*storage.get_or_init(&[9; 4]), [1, 2, 3, 4]);
+        storage.update(&[5, 6, 7, 8]);
+        assert_eq!(*storage.get_ref(), [5, 6, 7, 8]);
+    }
+
+    // A never-updated storage also takes a plain update.
+    #[test]
+    fn atomic_storage_updates_zeroed_nvm() {
+        let pointer = &raw mut NEVER_UPDATED;
+        let storage = unsafe { (*pointer).get_mut() };
+        storage.storage_a.invalidate();
+        storage.storage_b.invalidate();
+        storage.update(&[3; 4]);
+        assert_eq!(*storage.get_ref(), [3; 4]);
+    }
+
+    #[unsafe(link_section = ".nvm_data")]
+    static mut SETTLED: NVMData<AtomicStorage<[u8; 4]>> = NVMData::new(AtomicStorage::new(&[0; 4]));
+
+    // An update leaves the replaced value in the storage it invalidates; settling overwrites it
+    // with the current value, keeps the current value readable, and writes nothing once both
+    // storages agree.
+    #[test]
+    fn atomic_storage_settle_overwrites_the_replaced_value() {
+        let pointer = &raw mut SETTLED;
+        let storage = unsafe { (*pointer).get_mut() };
+        storage.update(&[1; 4]);
+        storage.update(&[2; 4]);
+        let replaced = [
+            *storage.storage_a.value.get_ref(),
+            *storage.storage_b.value.get_ref(),
+        ];
+        assert_eq!(replaced.contains(&[1; 4]), true);
+        storage.settle();
+        assert_eq!(*storage.storage_a.value.get_ref(), [2; 4]);
+        assert_eq!(*storage.storage_b.value.get_ref(), [2; 4]);
+        assert_eq!(*storage.get_ref(), [2; 4]);
+        storage.settle();
+        assert_eq!(*storage.get_ref(), [2; 4]);
     }
 }
