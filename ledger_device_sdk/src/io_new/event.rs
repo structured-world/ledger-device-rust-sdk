@@ -188,48 +188,21 @@ impl<const N: usize> DecodedEvent<N> {
         offset: usize,
         io_len: usize,
     ) -> DecodedEventType {
-        use ApduError::*;
-
         comm.apdu_type = packet_type;
 
-        let apdu_buffer = &comm.buf[offset..];
-
-        if io_len < 5 {
-            return DecodedEventType::ApduError(BadLen);
-        }
-
-        let rx_len = io_len - 1;
-
-        let header = ApduHeader {
-            cla: apdu_buffer[0],
-            ins: apdu_buffer[1],
-            p1: apdu_buffer[2],
-            p2: apdu_buffer[3],
-        };
-        if rx_len == 4 {
-            return DecodedEventType::new_apdu(header, 4, 0);
-        }
-        let first_len_byte = apdu_buffer[4];
-
-        match (first_len_byte, rx_len) {
-            (0, 5) => {
-                // Non-conforming zero-data APDU (TODO: per the standard, this should actually be read as a 256-byte long APDU; but that's likely to break things as lots)
-                DecodedEventType::new_apdu(header, 4, 0)
-            }
-            (0, 6) => DecodedEventType::ApduError(BadLen),
-            (0, _) => {
-                let len = u16::from_be_bytes([apdu_buffer[5], apdu_buffer[6]]) as usize;
-                if rx_len != len + 7 {
-                    return DecodedEventType::ApduError(BadLen);
-                }
-                DecodedEventType::new_apdu(header, 1 + 7, len)
-            }
-            (len, _) => {
-                if rx_len != len as usize + 5 {
-                    return DecodedEventType::ApduError(BadLen);
-                }
-                DecodedEventType::new_apdu(header, 1 + 5, len as usize)
-            }
+        let apdu = &comm.buf[offset..io_len];
+        match crate::apdu::layout(apdu) {
+            Ok(layout) => DecodedEventType::new_apdu(
+                ApduHeader {
+                    cla: apdu[0],
+                    ins: apdu[1],
+                    p1: apdu[2],
+                    p2: apdu[3],
+                },
+                offset + layout.data_offset,
+                layout.data_len,
+            ),
+            Err(e) => DecodedEventType::ApduError(e),
         }
     }
 }

@@ -9,6 +9,7 @@
 #![feature(const_option_ops)]
 #![feature(const_trait_impl)]
 
+pub(crate) mod apdu;
 mod app_info;
 pub mod bn;
 pub mod ecc;

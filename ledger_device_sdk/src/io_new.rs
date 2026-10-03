@@ -295,9 +295,7 @@ impl<const N: usize> Comm<N> {
     }
 }
 
-pub enum ApduError {
-    BadLen,
-}
+pub use crate::apdu::ApduError;
 
 impl From<ApduError> for StatusWords {
     fn from(e: ApduError) -> Self {
