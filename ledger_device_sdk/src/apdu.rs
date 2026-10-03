@@ -21,45 +21,84 @@ pub(crate) struct ApduLayout {
     pub extended: bool,
 }
 
-/// The layout of `apdu`, a whole command APDU from CLA to its last byte.
+/// The layout of `apdu`, a whole command APDU from CLA to its last byte, by the command cases of
+/// ISO/IEC 7816-4 5.1: no body (case 1), Le only (case 2), Lc and data (case 3), Lc, data and Le
+/// (case 4), each short or extended. An Le of zero stands for the largest value of its form.
+///
+/// The body `00` alone is case 2 with Le 256, so a command such as `B0 01 00 00 00` keeps reading
+/// as one without data.
 pub(crate) fn layout(apdu: &[u8]) -> Result<ApduLayout, ApduError> {
-    let short = |data_len| ApduLayout {
-        data_offset: 5,
-        data_len,
-        le: None,
-        extended: false,
+    let short_le = |byte: u8| if byte == 0 { 256 } else { byte as usize };
+    let extended_le = |high: u8, low: u8| match u16::from_be_bytes([high, low]) {
+        0 => 65536,
+        le => le as usize,
     };
-    match apdu.len() {
-        0..=3 => Err(ApduError::BadLen),
-        4 => Ok(ApduLayout {
+    let len = apdu.len();
+    if len < 4 {
+        return Err(ApduError::BadLen);
+    }
+    if len == 4 {
+        return Ok(ApduLayout {
             data_offset: 4,
             data_len: 0,
             le: None,
             extended: false,
-        }),
-        len => match apdu[4] {
-            0 if len == 5 => Ok(short(0)),
-            0 if len == 6 => Err(ApduError::BadLen),
-            0 => {
-                let lc = u16::from_be_bytes([apdu[5], apdu[6]]) as usize;
-                if len != lc + 7 {
-                    return Err(ApduError::BadLen);
-                }
-                Ok(ApduLayout {
-                    data_offset: 7,
-                    data_len: lc,
-                    le: None,
-                    extended: true,
-                })
-            }
-            lc => {
-                if len != lc as usize + 5 {
-                    return Err(ApduError::BadLen);
-                }
-                Ok(short(lc as usize))
-            }
-        },
+        });
     }
+    if len == 5 {
+        return Ok(ApduLayout {
+            data_offset: 5,
+            data_len: 0,
+            le: Some(short_le(apdu[4])),
+            extended: false,
+        });
+    }
+    if apdu[4] != 0 {
+        let lc = apdu[4] as usize;
+        let le = if len == 5 + lc {
+            None
+        } else if len == 6 + lc {
+            Some(short_le(apdu[len - 1]))
+        } else {
+            return Err(ApduError::BadLen);
+        };
+        return Ok(ApduLayout {
+            data_offset: 5,
+            data_len: lc,
+            le,
+            extended: false,
+        });
+    }
+    // Extended form: a zero byte, then two-byte length fields.
+    if len < 7 {
+        return Err(ApduError::BadLen);
+    }
+    if len == 7 {
+        return Ok(ApduLayout {
+            data_offset: 7,
+            data_len: 0,
+            le: Some(extended_le(apdu[5], apdu[6])),
+            extended: true,
+        });
+    }
+    // An extended Lc of zero is no case: a body without data is the Le field alone.
+    let lc = u16::from_be_bytes([apdu[5], apdu[6]]) as usize;
+    if lc == 0 {
+        return Err(ApduError::BadLen);
+    }
+    let le = if len == 7 + lc {
+        None
+    } else if len == 9 + lc {
+        Some(extended_le(apdu[len - 2], apdu[len - 1]))
+    } else {
+        return Err(ApduError::BadLen);
+    };
+    Ok(ApduLayout {
+        data_offset: 7,
+        data_len: lc,
+        le,
+        extended: true,
+    })
 }
 
 #[cfg(test)]
