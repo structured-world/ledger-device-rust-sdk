@@ -75,11 +75,12 @@ fn panic_reply_impl<const N: usize>(reply: Reply) {
 pub(super) fn next_event_ahead_impl<const N: usize>() -> bool {
     let comm = unsafe { get_comm::<N>() };
 
-    // Decoding an APDU overwrites `apdu_type` with the transport it arrived on.
-    // Anything handled or rejected below is not the command the application is
-    // working on, so its transport is restored before returning; otherwise the
-    // in-flight command's response would go out on the intruder's channel.
-    let in_flight_apdu_type = comm.apdu_type;
+    // Decoding an APDU overwrites `frame` with the transport and length fields
+    // of the APDU. Anything handled or rejected below is not the command the
+    // application is working on, so its frame is restored before returning;
+    // otherwise the in-flight command's response would go out on the
+    // intruder's channel.
+    let in_flight_frame = comm.frame;
 
     // An APDU detected on an earlier iteration that nobody consumed means the
     // displayed screen does not exit on APDU. Answer it, so that polling — and
@@ -87,7 +88,7 @@ pub(super) fn next_event_ahead_impl<const N: usize>() -> bool {
     // here, as one would have been rejected on the spot below.
     if comm.pending_apdu {
         comm.pending_apdu = false;
-        comm.reject_apdu(in_flight_apdu_type, StatusWords::CmdNotAccepted);
+        comm.reject_apdu(in_flight_frame.packet_type, StatusWords::CmdNotAccepted);
         return false;
     }
 
@@ -110,16 +111,16 @@ pub(super) fn next_event_ahead_impl<const N: usize>() -> bool {
                 // The BOLOS reply must not be taken for the reply to the
                 // command the application is still processing.
                 comm.apdu_in_progress = in_progress;
-                comm.apdu_type = in_flight_apdu_type;
+                comm.frame = in_flight_frame;
                 return false;
             }
             // An APDU arriving while a command is still being processed is a
             // double APDU. Answer it on this very iteration: deferring to the
             // next one loses it entirely if the screen completes in between.
             if comm.apdu_in_progress {
-                let intruder_apdu_type = comm.apdu_type;
-                comm.reject_apdu(intruder_apdu_type, StatusWords::CmdNotAccepted);
-                comm.apdu_type = in_flight_apdu_type;
+                let intruder_packet_type = comm.frame.packet_type;
+                comm.reject_apdu(intruder_packet_type, StatusWords::CmdNotAccepted);
+                comm.frame = in_flight_frame;
                 return false;
             }
             comm.pending_apdu = true;
@@ -131,9 +132,9 @@ pub(super) fn next_event_ahead_impl<const N: usize>() -> bool {
         // Answer malformed APDUs instead of leaving the host without a status
         // word, as `next_command` does outside of screens.
         DecodedEventType::ApduError(e) => {
-            let intruder_apdu_type = comm.apdu_type;
-            comm.reject_apdu(intruder_apdu_type, StatusWords::from(e));
-            comm.apdu_type = in_flight_apdu_type;
+            let intruder_packet_type = comm.frame.packet_type;
+            comm.reject_apdu(intruder_packet_type, StatusWords::from(e));
+            comm.frame = in_flight_frame;
             false
         }
         _ => false,

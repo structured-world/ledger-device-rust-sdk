@@ -1,4 +1,4 @@
-use super::{ApduError, ApduHeader, Comm};
+use super::{ApduError, ApduFrame, ApduHeader, Comm};
 use crate::seph;
 
 #[cfg(any(target_os = "nanosplus", target_os = "nanox"))]
@@ -41,7 +41,8 @@ impl<const N: usize> DecodedEvent<N> {
             PacketTypes::PacketTypeRawApdu
             | PacketTypes::PacketTypeUsbHidApdu
             | PacketTypes::PacketTypeUsbWebusbApdu
-            | PacketTypes::PacketTypeBleApdu => {
+            | PacketTypes::PacketTypeBleApdu
+            | PacketTypes::PacketTypeNfcApdu => {
                 // Reject every APDU, BOLOS ones included, while the device is
                 // locked, as `io_legacy` does. The reply goes out on the
                 // APDU's own transport and no `Comm` state is touched, so a
@@ -188,20 +189,26 @@ impl<const N: usize> DecodedEvent<N> {
         offset: usize,
         io_len: usize,
     ) -> DecodedEventType {
-        comm.apdu_type = packet_type;
+        // A malformed APDU is answered on its own transport too.
+        comm.frame = ApduFrame {
+            packet_type,
+            le: None,
+            extended: false,
+        };
 
         let apdu = &comm.buf[offset..io_len];
         match crate::apdu::layout(apdu) {
-            Ok(layout) => DecodedEventType::new_apdu(
-                ApduHeader {
+            Ok(layout) => {
+                let header = ApduHeader {
                     cla: apdu[0],
                     ins: apdu[1],
                     p1: apdu[2],
                     p2: apdu[3],
-                },
-                offset + layout.data_offset,
-                layout.data_len,
-            ),
+                };
+                comm.frame.le = layout.le;
+                comm.frame.extended = layout.extended;
+                DecodedEventType::new_apdu(header, offset + layout.data_offset, layout.data_len)
+            }
             Err(e) => DecodedEventType::ApduError(e),
         }
     }
