@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `io_new`, `io_legacy`: APDUs received over NFC (`OS_IO_PACKET_TYPE_NFC_APDU`)
+  reach the application and are answered over NFC.
+- `io_new`: `Command::transport`, `Command::le` and `Command::is_extended` tell
+  the application which transport a command came on and what response it
+  accepts.
+- `nfc` feature: builds the C SDK's NFC card emulation (`HAVE_NFC`, `lib_nfc`)
+  on Stax, Flex and Apex P, for applications that run the IO stack themselves.
+
+### Fixed
+- `io_new`: command APDUs with an Le field (cases 2 and 4 of ISO/IEC 7816-4,
+  short and extended) are accepted instead of answered `BadLen`. A body of a
+  single `00` still reads as a command without data.
+
 ## [1.38.0] - 2026-09-29
 
 ### Changed
