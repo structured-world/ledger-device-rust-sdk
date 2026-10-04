@@ -16,8 +16,16 @@ pub(crate) struct ApduLayout {
     /// Length of the command data (Nc).
     pub data_len: usize,
     /// Maximum number of response data bytes (Ne), when the APDU carries an Le field.
+    #[cfg_attr(
+        not(any(feature = "io_new", test)),
+        allow(dead_code, reason = "only io_new hands Le to the application")
+    )]
     pub le: Option<usize>,
     /// True when the length fields use the extended form.
+    #[cfg_attr(
+        not(any(feature = "io_new", test)),
+        allow(dead_code, reason = "only io_new hands the form to the application")
+    )]
     pub extended: bool,
 }
 
