@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reach the application and are answered over NFC.
 - `io_new`: `Command::transport`, `Command::le` and `Command::is_extended` tell
   the application which transport a command came on and what response it
-  accepts.
+  accepts; `Command::header` gives its CLA, INS, P1 and P2.
 - `io_new`: `Comm::send_on` and `CommandResponse::send_on` answer on a given
   transport, for a command answered after other APDUs were received.
 - `nfc` feature: builds the C SDK's NFC card emulation (`HAVE_NFC`, `lib_nfc`)

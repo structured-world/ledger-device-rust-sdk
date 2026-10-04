@@ -478,6 +478,11 @@ impl<'a, const N: usize> Command<'a, N> {
         T::try_from(self.header).map_err(Reply::from)
     }
 
+    /// The command's header: CLA, INS, P1 and P2.
+    pub fn header(&self) -> ApduHeader {
+        self.header
+    }
+
     /// The transport the command arrived on; its response goes out on the same one.
     pub fn transport(&self) -> Option<ApduTransport> {
         ApduTransport::from_packet_type(self.comm.frame.packet_type)
