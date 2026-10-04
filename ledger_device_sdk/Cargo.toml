@@ -38,6 +38,7 @@ speculos = ["unit_test"]
 heap = [ "ledger_secure_sdk_sys/heap" ]
 nano_nbgl = [ "ledger_secure_sdk_sys/nano_nbgl" ]
 debug_csdk = [ "ledger_secure_sdk_sys/debug_csdk" ]
+nfc = [ "ledger_secure_sdk_sys/nfc" ]
 io_new = []  # switch to new 'io' module
 # Run the IO stack in the application instead of the OS (see ledger_secure_sdk_sys).
 app_io_stack = [ "ledger_secure_sdk_sys/app_io_stack" ]

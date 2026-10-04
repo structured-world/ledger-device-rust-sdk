@@ -26,12 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   current value, writing only when the two differ, so the value the last update
   replaced leaves no trace in NVM. An application storing secrets calls it at
   start to finish an erase a power loss interrupted.
+- `io_new`, `io_legacy`: APDUs received over NFC (`OS_IO_PACKET_TYPE_NFC_APDU`)
+  reach the application and are answered over NFC.
+- `io_new`: `Command::transport`, `Command::le` and `Command::is_extended` tell
+  the application which transport a command came on and what response it
+  accepts.
+- `nfc` feature: builds the C SDK's NFC card emulation (`HAVE_NFC`, `lib_nfc`)
+  on Stax, Flex and Apex P, for applications that run the IO stack themselves.
 
 ### Fixed
 - `nvm`: `AtomicStorage::update` on a storage that was never updated stores the
   value instead of panicking with "invalidated atomic storage". An interrupted
   update never clears both flags, so this state only means the storage was
   never updated.
+- `io_new`: command APDUs with an Le field (cases 2 and 4 of ISO/IEC 7816-4,
+  short and extended) are accepted instead of answered `BadLen`. A body of a
+  single `00` still reads as a command without data.
 
 ## [1.38.0] - 2026-09-29
 

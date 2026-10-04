@@ -134,11 +134,56 @@ pub enum CommError {
     IoError,
 }
 
+/// The transport a command APDU arrived on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApduTransport {
+    /// The raw APDU channel of the MCU (Speculos APDU port).
+    Raw,
+    /// The Ledger USB HID interface.
+    UsbHid,
+    /// The WebUSB interface.
+    UsbWebusb,
+    /// Bluetooth Low Energy.
+    Ble,
+    /// NFC card emulation (ISO/IEC 14443-4).
+    Nfc,
+}
+
+impl ApduTransport {
+    fn from_packet_type(packet_type: u8) -> Option<Self> {
+        match PacketTypes::from(packet_type) {
+            PacketTypes::PacketTypeRawApdu => Some(Self::Raw),
+            PacketTypes::PacketTypeUsbHidApdu => Some(Self::UsbHid),
+            PacketTypes::PacketTypeUsbWebusbApdu => Some(Self::UsbWebusb),
+            PacketTypes::PacketTypeBleApdu => Some(Self::Ble),
+            PacketTypes::PacketTypeNfcApdu => Some(Self::Nfc),
+            _ => None,
+        }
+    }
+}
+
+/// How the last decoded APDU arrived: its transport, which the response goes out on, and the
+/// length fields that shape the response.
+#[derive(Clone, Copy)]
+pub(crate) struct ApduFrame {
+    pub(crate) packet_type: u8,
+    pub(crate) le: Option<usize>,
+    pub(crate) extended: bool,
+}
+
+impl ApduFrame {
+    const NONE: Self = Self {
+        packet_type: PacketTypes::PacketTypeNone as u8,
+        le: None,
+        extended: false,
+    };
+}
+
 pub struct Comm<const N: usize = DEFAULT_BUF_SIZE> {
     buf: [u8; N],
     expected_cla: Option<u8>,
 
-    apdu_type: u8,
+    frame: ApduFrame,
     #[cfg(any(target_os = "nanosplus", target_os = "nanox"))]
     buttons: ButtonsState,
     // Pending APDU state (set by next_event_ahead callback path). When set, the buffer
@@ -158,7 +203,7 @@ impl<const N: usize> Comm<N> {
         Self {
             buf: [0; N],
             expected_cla: None,
-            apdu_type: PacketTypes::PacketTypeNone as u8,
+            frame: ApduFrame::NONE,
             #[cfg(any(target_os = "nanosplus", target_os = "nanox"))]
             buttons: ButtonsState::default(),
             pending_apdu: false,
@@ -178,7 +223,7 @@ impl<const N: usize> Comm<N> {
     /// the transport it arrived on.
     ///
     /// This deliberately bypasses [`Comm::begin_response`]: it must stage
-    /// nothing into the shared buffer and must leave `apdu_type`,
+    /// nothing into the shared buffer and must leave `frame`,
     /// `pending_apdu` and `apdu_in_progress` alone, as they belong to the
     /// command that is still being processed.
     pub(crate) fn reject_apdu<T: Into<Reply>>(&self, packet_type: u8, sw: T) {
@@ -374,9 +419,7 @@ impl<const N: usize> core::fmt::Debug for CommandOrEvent<'_, N> {
     }
 }
 
-pub enum ApduError {
-    BadLen,
-}
+pub use crate::apdu::ApduError;
 
 impl From<ApduError> for StatusWords {
     fn from(e: ApduError) -> Self {
@@ -409,6 +452,22 @@ impl<'a, const N: usize> Command<'a, N> {
         Reply: From<<T as TryFrom<ApduHeader>>::Error>,
     {
         T::try_from(self.header).map_err(Reply::from)
+    }
+
+    /// The transport the command arrived on; its response goes out on the same one.
+    pub fn transport(&self) -> Option<ApduTransport> {
+        ApduTransport::from_packet_type(self.comm.frame.packet_type)
+    }
+
+    /// Ne, the most response data bytes the command accepts, when it carries an Le field
+    /// (ISO/IEC 7816-4 5.1): 256 for a short Le of zero, 65536 for an extended one.
+    pub fn le(&self) -> Option<usize> {
+        self.comm.frame.le
+    }
+
+    /// True when the command used the extended form of the length fields (ISO/IEC 7816-4 5.1).
+    pub fn is_extended(&self) -> bool {
+        self.comm.frame.extended
     }
 
     pub fn get_data(&self) -> &[u8] {
@@ -505,7 +564,7 @@ impl<'a, const N: usize> CommandResponse<'a, N> {
         let sw: u16 = reply.into().0;
         self.append(sw.to_be_bytes().as_ref())?;
         let n = self.len;
-        if 0 > sys_seph::io_tx(self.comm.apdu_type, self.comm.buf[..n].as_ref(), n) {
+        if 0 > sys_seph::io_tx(self.comm.frame.packet_type, self.comm.buf[..n].as_ref(), n) {
             return Err(CommError::IoError);
         }
         // Clear the pending APDU state after sending a reply, so the next

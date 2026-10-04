@@ -649,7 +649,8 @@ impl Comm {
             seph::PacketTypes::PacketTypeRawApdu
             | seph::PacketTypes::PacketTypeUsbHidApdu
             | seph::PacketTypes::PacketTypeUsbWebusbApdu
-            | seph::PacketTypes::PacketTypeBleApdu => {
+            | seph::PacketTypes::PacketTypeBleApdu
+            | seph::PacketTypes::PacketTypeNfcApdu => {
                 if Self::is_device_locked() {
                     self.reply(StatusWords::DeviceLocked);
                     return None;
@@ -691,6 +692,7 @@ impl Comm {
                 | seph::PacketTypes::PacketTypeUsbHidApdu
                 | seph::PacketTypes::PacketTypeUsbWebusbApdu
                 | seph::PacketTypes::PacketTypeBleApdu
+                | seph::PacketTypes::PacketTypeNfcApdu
         )
     }
 

@@ -9,6 +9,9 @@
 #![feature(const_option_ops)]
 #![feature(const_trait_impl)]
 
+// Used by `io_new`; built for the unit tests too, which run without it.
+#[cfg(any(feature = "io_new", test))]
+pub(crate) mod apdu;
 mod app_info;
 #[cfg(feature = "app_storage")]
 pub mod app_storage;
