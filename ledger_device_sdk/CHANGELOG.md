@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on Stax, Flex and Apex P, for applications that run the IO stack themselves.
 
 ### Fixed
+- `io_new`: an event the IO stack takes without delivering anything (`io_rx`
+  below zero, as for every part but the last of an NFC APDU) is ignored
+  instead of panicking, as the C SDK's loops skip it.
 - `io_new`: command APDUs with an Le field (cases 2 and 4 of ISO/IEC 7816-4,
   short and extended) are accepted instead of answered `BadLen`. A body of a
   single `00` still reads as a command without data.

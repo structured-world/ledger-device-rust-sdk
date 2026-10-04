@@ -300,7 +300,15 @@ impl<const N: usize> Comm<N> {
                 length: self.pending_length,
             });
         }
-        self.recv(true).unwrap().decode_event()
+        match self.recv(true) {
+            Ok(rx) => rx.decode_event(),
+            // The IO stack took the event without delivering anything: a part of an NFC APDU
+            // that is still being assembled answers -1 (lib_nfc's NFC_LEDGER_rx_seph_apdu_evt).
+            // The C SDK's loops act only on a positive length and skip it too.
+            Err(CommError::IoError | CommError::Overflow) => {
+                DecodedEvent::from_type(DecodedEventType::Ignored)
+            }
+        }
     }
 
     pub fn next_event(&mut self) -> DecodedEvent<N> {
