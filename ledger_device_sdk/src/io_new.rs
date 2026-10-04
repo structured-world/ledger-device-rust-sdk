@@ -150,6 +150,17 @@ pub enum ApduTransport {
 }
 
 impl ApduTransport {
+    /// The packet type an answer on this transport goes out with.
+    const fn packet_type(self) -> u8 {
+        (match self {
+            Self::Raw => PacketTypes::PacketTypeRawApdu,
+            Self::UsbHid => PacketTypes::PacketTypeUsbHidApdu,
+            Self::UsbWebusb => PacketTypes::PacketTypeUsbWebusbApdu,
+            Self::Ble => PacketTypes::PacketTypeBleApdu,
+            Self::Nfc => PacketTypes::PacketTypeNfcApdu,
+        }) as u8
+    }
+
     fn from_packet_type(packet_type: u8) -> Option<Self> {
         match PacketTypes::from(packet_type) {
             PacketTypes::PacketTypeRawApdu => Some(Self::Raw),
@@ -262,6 +273,19 @@ impl<const N: usize> Comm<N> {
     /// Send directly from an external slice, bypassing the internal buffer.
     pub fn send<T: Into<Reply>>(&mut self, data: &[u8], reply: T) -> Result<(), CommError> {
         self.begin_response().extend(data)?.send(reply).unwrap();
+        Ok(())
+    }
+
+    /// Send `data` and `reply` on `transport`; see [`CommandResponse::send_on`].
+    pub fn send_on<T: Into<Reply>>(
+        &mut self,
+        transport: ApduTransport,
+        data: &[u8],
+        reply: T,
+    ) -> Result<(), CommError> {
+        self.begin_response()
+            .extend(data)?
+            .send_on(transport, reply)?;
         Ok(())
     }
 
@@ -560,11 +584,32 @@ impl<'a, const N: usize> CommandResponse<'a, N> {
     }
 
     /// Send the staged bytes, adding a status word based on the reply
-    pub fn send<T: Into<Reply>>(mut self, reply: T) -> Result<&'a mut Comm<N>, CommError> {
+    pub fn send<T: Into<Reply>>(self, reply: T) -> Result<&'a mut Comm<N>, CommError> {
+        let packet_type = self.comm.frame.packet_type;
+        self.send_packet(packet_type, reply)
+    }
+
+    /// Send the staged bytes on `transport`, adding a status word based on the reply. For the
+    /// answer to a command that was set aside while other APDUs were taken: [`Self::send`] goes
+    /// out on the transport of the last APDU received, which may no longer be the one of the
+    /// command answered (an NFC command answered after a screen, while a USB command came in).
+    pub fn send_on<T: Into<Reply>>(
+        self,
+        transport: ApduTransport,
+        reply: T,
+    ) -> Result<&'a mut Comm<N>, CommError> {
+        self.send_packet(transport.packet_type(), reply)
+    }
+
+    fn send_packet<T: Into<Reply>>(
+        mut self,
+        packet_type: u8,
+        reply: T,
+    ) -> Result<&'a mut Comm<N>, CommError> {
         let sw: u16 = reply.into().0;
         self.append(sw.to_be_bytes().as_ref())?;
         let n = self.len;
-        if 0 > sys_seph::io_tx(self.comm.frame.packet_type, self.comm.buf[..n].as_ref(), n) {
+        if 0 > sys_seph::io_tx(packet_type, self.comm.buf[..n].as_ref(), n) {
             return Err(CommError::IoError);
         }
         // Clear the pending APDU state after sending a reply, so the next
