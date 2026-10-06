@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `app_io_stack` feature: the app runs the C SDK's USB/BLE IO stack itself instead of
   the OS one (the C SDK's `DISABLE_OS_IO_STACK_USE`), for apps that drive an interface
   such as U2F/CTAPHID themselves. `exit_app` stops that stack before leaving.
+- `io_new`: `Comm::next_command_or_event` waits for one event and returns either an
+  application command, handled exactly as `next_command` handles it (BOLOS APDUs and
+  unexpected classes are answered internally), or the event itself, so an application
+  can run periodic work on ticker events between commands.
 
 ### Fixed
 - `nvm`: `AtomicStorage::update` on a storage that was never updated stores the
