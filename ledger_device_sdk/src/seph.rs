@@ -16,6 +16,8 @@ pub enum PacketTypes {
     PacketTypeUsbWebusbApdu = OS_IO_PACKET_TYPE_USB_WEBUSB_APDU,
 
     PacketTypeBleApdu = OS_IO_PACKET_TYPE_BLE_APDU,
+
+    PacketTypeNfcApdu = OS_IO_PACKET_TYPE_NFC_APDU,
 }
 
 impl From<u8> for PacketTypes {
@@ -28,6 +30,7 @@ impl From<u8> for PacketTypes {
             OS_IO_PACKET_TYPE_USB_HID_APDU => PacketTypes::PacketTypeUsbHidApdu,
             OS_IO_PACKET_TYPE_USB_WEBUSB_APDU => PacketTypes::PacketTypeUsbWebusbApdu,
             OS_IO_PACKET_TYPE_BLE_APDU => PacketTypes::PacketTypeBleApdu,
+            OS_IO_PACKET_TYPE_NFC_APDU => PacketTypes::PacketTypeNfcApdu,
             _ => PacketTypes::PacketTypeNone,
         }
     }
