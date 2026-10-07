@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `app_io_stack` feature: the app runs the C SDK's USB/BLE IO stack itself instead of
   the OS one (the C SDK's `DISABLE_OS_IO_STACK_USE`), for apps that drive an interface
   such as U2F/CTAPHID themselves. `exit_app` stops that stack before leaving.
+- `debug_over_usb` feature: C SDK `PRINTF` and the Rust log macros go to a USB CDC
+  (serial) interface on a real device. It enables `app_io_stack`, since only an app-side
+  IO stack exposes that interface; on Nano S+ it drops WebUSB and U2F to fit the CDC
+  interfaces. Mutually exclusive with `debug_csdk`.
 
 ## [1.41.0] - 2026-10-06
 
