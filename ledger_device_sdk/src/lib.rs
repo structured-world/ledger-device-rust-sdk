@@ -9,6 +9,8 @@
 #![feature(const_option_ops)]
 #![feature(const_trait_impl)]
 
+// The command APDU layout both IO stacks read.
+pub(crate) mod apdu;
 mod app_info;
 #[cfg(feature = "app_storage")]
 pub mod app_storage;
