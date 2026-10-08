@@ -11,16 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `app_io_stack` feature: build without `USE_OS_IO_STACK`, so the app runs the C SDK's
   USB/BLE IO stack itself (the C SDK's `DISABLE_OS_IO_STACK_USE`); `os_io.o` is always
   linked in that mode instead of the weak syscall stubs
-- `app_storage` feature: compile the C SDK's `lib_standard_app/app_storage.c` with its size
-  from the `APP_STORAGE_SIZE` environment variable (default 480) and the SETTINGS/DATA
-  header properties from the `app_storage_settings` / `app_storage_data` features, bind
-  `include/app_storage.h`, and initialize the storage at startup
-- `.storage_section` in link.ld, at the start of the app data region as in the C SDK;
-  empty without the feature
 
 ### Changed
 - `exit_app` stops the app's IO stack (`os_io_stop`) before `os_sched_exit` with
   `app_io_stack`
+
+## [1.17.0] - 2026-10-06
+
+### Added
+- `app_storage` feature: compile the C SDK's `lib_standard_app/app_storage.c` with its size
+  from the `APP_STORAGE_SIZE` environment variable (default 480) and the SETTINGS/DATA
+  header properties from the `app_storage_settings` / `app_storage_data` features, bind
+  `include/app_storage.h`, and initialize the storage at startup as `common_app_init()`
+  does: for a standalone start and for Exchange's `SIGN_TRANSACTION`, before the
+  transaction parameters are copied rather than after
+- `.storage_section` in link.ld, at the start of the app data region as in the C SDK;
+  empty without the feature
+
+## [1.16.6] - 2026-10-05
+
+### Changed
+- `build.rs` reports the offending path when the per-device `.defines` file
+  cannot be opened or read, instead of panicking with a bare
+  `called 'Result::unwrap()' on an 'Err' value: Os { code: 2, ... }`
+
+## [1.16.5] - 2026-10-05
+
+### Changed
+- Nano X: with `mlkem` or `mldsa` enabled, the heap is 2 KB by default and a
+  larger `HEAP_SIZE` fails the build.
 
 ## [1.16.4] - 2026-08-18
 

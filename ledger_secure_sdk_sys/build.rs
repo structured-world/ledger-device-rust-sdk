@@ -284,7 +284,24 @@ impl SDKBuilder<'_> {
             }
         }
         if env::var_os("CARGO_FEATURE_APP_STORAGE").is_some() {
-            defines.extend(app_storage_defines());
+            let size = app_storage_size();
+            defines.extend(app_storage_defines(size));
+            // The capacity the C side is compiled with, for the Rust side to report.
+            let out_dir = env::var("OUT_DIR").unwrap();
+            fs::write(
+                Path::new(&out_dir).join("app_storage_size.rs"),
+                format!(
+                    "/// Capacity of the application storage in bytes, set by `APP_STORAGE_SIZE` \
+                     at build time.\npub const APP_STORAGE_SIZE: u32 = {size};"
+                ),
+            )
+            .expect("Unable to write file");
+        }
+        // `nfc`: NFC card emulation on the devices that have NFC (Stax, Flex, Apex P), as
+        // ENABLE_NFC does in the C SDK's Makefile.standard_app. It matters to an application that
+        // runs the IO stack itself; the OS stack has its own.
+        if env::var_os("CARGO_FEATURE_NFC").is_some() && !spec.is_nano() {
+            defines.push(("HAVE_NFC".into(), None));
         }
 
         let cflags = read_lines(&spec.cflags_file());
@@ -421,6 +438,9 @@ impl SDKBuilder<'_> {
             }
             if s.0 == "HAVE_BLE" {
                 configure_lib_ble(&mut command, &self.device.c_sdk);
+            }
+            if s.0 == "HAVE_NFC" {
+                configure_lib_nfc(&mut command, &self.device.c_sdk);
             }
             if s.0 == "HAVE_NBGL" {
                 configure_lib_nbgl(&mut command, &self.device.c_sdk);
@@ -610,9 +630,24 @@ impl SDKBuilder<'_> {
         //  1. A single integer (e.g. "8192")
         //  2. A comma-separated list of target:value pairs (e.g. "nanosplus: 8192, stax: 12288")
         //     where target matches CARGO_CFG_TARGET_OS.
-        // If not specified, or if the current target isn't present, default to DEFAULT_HEAP_SIZE.
+        // If not specified, or if the current target isn't present, default to default_heap_size.
         const DEFAULT_HEAP_SIZE: u32 = 8192;
-        let raw = env::var("HEAP_SIZE").unwrap_or_else(|_| DEFAULT_HEAP_SIZE.to_string());
+        // The ML-KEM and ML-DSA C routines need more stack than the default heap
+        // leaves on Nano X.
+        const NANOX_PQ_HEAP_SIZE: u32 = 2048;
+        let pq_enabled = env::var_os("CARGO_FEATURE_MLKEM").is_some()
+            || env::var_os("CARGO_FEATURE_MLDSA").is_some();
+        let default_heap_size = || {
+            if target_os == "nanox" && pq_enabled {
+                println!(
+                    "cargo:warning=ML-KEM/ML-DSA enabled on Nano X: heap size defaults to {NANOX_PQ_HEAP_SIZE}"
+                );
+                NANOX_PQ_HEAP_SIZE
+            } else {
+                DEFAULT_HEAP_SIZE
+            }
+        };
+        let raw = env::var("HEAP_SIZE").unwrap_or_else(|_| default_heap_size().to_string());
         let trimmed = raw.trim();
 
         let heap_size_value: u32 = match trimmed.parse::<u32>() {
@@ -633,7 +668,7 @@ impl SDKBuilder<'_> {
                         break;
                     }
                 }
-                selected.unwrap_or(DEFAULT_HEAP_SIZE)
+                selected.unwrap_or_else(default_heap_size)
             }
         };
 
@@ -647,6 +682,12 @@ impl SDKBuilder<'_> {
             "apex_p" => 36 * 1024,
             _ => panic!("Unknown target OS '{target_os}'"),
         };
+
+        assert!(
+            !(target_os == "nanox" && pq_enabled && heap_size_value > NANOX_PQ_HEAP_SIZE),
+            "Invalid heap size specification '{raw}'; with ML-KEM/ML-DSA enabled, the heap must \
+             not exceed {NANOX_PQ_HEAP_SIZE} on nanox"
+        );
 
         assert!(
             (2048..=max_heap_size).contains(&heap_size_value),
@@ -724,20 +765,24 @@ fn main() {
 // Helper functions
 // --------------------------------------------------
 
-/// Defines of the `app_storage` feature, mirroring ENABLE_APP_STORAGE in the C SDK's
-/// Makefile.standard_app: the storage size comes from APP_STORAGE_SIZE (default 480, one
-/// 512-byte flash page minus room for the system header), the header properties from the
-/// `app_storage_settings` / `app_storage_data` features.
-fn app_storage_defines() -> Vec<(String, Option<String>)> {
+/// Capacity of the application storage in bytes, mirroring ENABLE_APP_STORAGE in the C SDK's
+/// Makefile.standard_app: APP_STORAGE_SIZE, by default 480 (one 512-byte flash page minus
+/// room for the system header).
+fn app_storage_size() -> u32 {
     const DEFAULT_APP_STORAGE_SIZE: u32 = 480;
-    let size = match env::var("APP_STORAGE_SIZE") {
+    match env::var("APP_STORAGE_SIZE") {
         Ok(raw) => match raw.trim().parse::<u32>() {
             Ok(size) if size > 0 => size,
             _ => panic!("APP_STORAGE_SIZE must be a positive number of bytes, got {raw:?}"),
         },
         Err(env::VarError::NotPresent) => DEFAULT_APP_STORAGE_SIZE,
         Err(e) => panic!("APP_STORAGE_SIZE is not valid unicode: {e}"),
-    };
+    }
+}
+
+/// Defines of the `app_storage` feature for a storage of `size` bytes, the header properties
+/// from the `app_storage_settings` / `app_storage_data` features.
+fn app_storage_defines(size: u32) -> Vec<(String, Option<String>)> {
     let property = |feature: &str| {
         if env::var_os(feature).is_some() {
             "1"
@@ -796,6 +841,13 @@ fn configure_lib_ble(command: &mut cc::Build, c_sdk: &Path) {
         .file(c_sdk.join("lib_blewbxx/src/ble_ledger.c"))
         .include(c_sdk.join("lib_blewbxx/include"))
         .include(c_sdk.join("lib_blewbxx_impl/include"));
+}
+
+fn configure_lib_nfc(command: &mut cc::Build, c_sdk: &Path) {
+    command
+        .file(c_sdk.join("lib_nfc/src/nfc_ledger.c"))
+        .file(c_sdk.join("lib_nfc/src/nfc_ndef.c"))
+        .include(c_sdk.join("lib_nfc/include"));
 }
 
 fn configure_lib_nbgl(command: &mut cc::Build, c_sdk: &Path) {
@@ -1061,9 +1113,13 @@ fn str2path(c_sdk: &Path, pathlist: &[&str]) -> Vec<PathBuf> {
 
 /// Get all #define from a header file
 fn header2define(headername: &str) -> Vec<(String, Option<String>)> {
-    let mut headerfile = File::open(headername).unwrap();
+    let mut headerfile = File::open(headername).unwrap_or_else(|e| {
+        panic!("Could not open defines file '{headername}': {e}");
+    });
     let mut header = String::new();
-    headerfile.read_to_string(&mut header).unwrap();
+    headerfile.read_to_string(&mut header).unwrap_or_else(|e| {
+        panic!("Could not read defines file '{headername}': {e}");
+    });
 
     header
         .lines()
