@@ -297,6 +297,12 @@ impl SDKBuilder<'_> {
             )
             .expect("Unable to write file");
         }
+        // `nfc`: NFC card emulation on the devices that have NFC (Stax, Flex, Apex P), as
+        // ENABLE_NFC does in the C SDK's Makefile.standard_app. It matters to an application that
+        // runs the IO stack itself; the OS stack has its own.
+        if env::var_os("CARGO_FEATURE_NFC").is_some() && !spec.is_nano() {
+            defines.push(("HAVE_NFC".into(), None));
+        }
 
         let cflags = read_lines(&spec.cflags_file());
 
@@ -432,6 +438,9 @@ impl SDKBuilder<'_> {
             }
             if s.0 == "HAVE_BLE" {
                 configure_lib_ble(&mut command, &self.device.c_sdk);
+            }
+            if s.0 == "HAVE_NFC" {
+                configure_lib_nfc(&mut command, &self.device.c_sdk);
             }
             if s.0 == "HAVE_NBGL" {
                 configure_lib_nbgl(&mut command, &self.device.c_sdk);
@@ -832,6 +841,13 @@ fn configure_lib_ble(command: &mut cc::Build, c_sdk: &Path) {
         .file(c_sdk.join("lib_blewbxx/src/ble_ledger.c"))
         .include(c_sdk.join("lib_blewbxx/include"))
         .include(c_sdk.join("lib_blewbxx_impl/include"));
+}
+
+fn configure_lib_nfc(command: &mut cc::Build, c_sdk: &Path) {
+    command
+        .file(c_sdk.join("lib_nfc/src/nfc_ledger.c"))
+        .file(c_sdk.join("lib_nfc/src/nfc_ndef.c"))
+        .include(c_sdk.join("lib_nfc/include"));
 }
 
 fn configure_lib_nbgl(command: &mut cc::Build, c_sdk: &Path) {

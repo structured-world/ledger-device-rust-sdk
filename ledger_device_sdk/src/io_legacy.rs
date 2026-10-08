@@ -720,13 +720,16 @@ impl Comm {
             seph::PacketTypes::PacketTypeRawApdu
             | seph::PacketTypes::PacketTypeUsbHidApdu
             | seph::PacketTypes::PacketTypeUsbWebusbApdu
-            | seph::PacketTypes::PacketTypeBleApdu => {
+            | seph::PacketTypes::PacketTypeBleApdu
+            | seph::PacketTypes::PacketTypeNfcApdu => {
+                // The answer goes out on the transport of this APDU, the refusal of a locked
+                // device included.
+                self.apdu_type = packet_type;
                 if Self::is_device_locked() {
                     self.reply(StatusWords::DeviceLocked);
                     return None;
                 }
                 self.apdu_buffer[0..272].copy_from_slice(&self.io_buffer[1..273]);
-                self.apdu_type = packet_type;
                 self.rx_length = length as usize;
                 self.rx = self.rx_length - 1;
                 self.event_pending = true;
@@ -762,6 +765,7 @@ impl Comm {
                 | seph::PacketTypes::PacketTypeUsbHidApdu
                 | seph::PacketTypes::PacketTypeUsbWebusbApdu
                 | seph::PacketTypes::PacketTypeBleApdu
+                | seph::PacketTypes::PacketTypeNfcApdu
         )
     }
 
@@ -863,28 +867,12 @@ impl Comm {
     }
 
     pub fn get_data(&self) -> Result<&[u8], StatusWords> {
-        if self.rx == 4 {
-            Ok(&[]) // Conforming zero-data APDU
-        } else {
-            let first_len_byte = self.apdu_buffer[4] as usize;
-            let get_data_from_buffer = |len, offset| {
-                if len == 0 || len + offset > self.rx {
-                    Err(StatusWords::BadLen)
-                } else {
-                    Ok(&self.apdu_buffer[offset..offset + len])
-                }
-            };
-            match (first_len_byte, self.rx) {
-                (0, 5) => Ok(&[]), // Non-conforming zero-data APDU
-                (0, 6) => Err(StatusWords::BadLen),
-                (0, _) => {
-                    let len =
-                        u16::from_be_bytes([self.apdu_buffer[5], self.apdu_buffer[6]]) as usize;
-                    get_data_from_buffer(len, 7)
-                }
-                (len, _) => get_data_from_buffer(len, 5),
-            }
-        }
+        // Every command case of ISO/IEC 7816-4 5.1, short and extended: a command with Le only
+        // (case 2, as NFC clients send) has no data, rather than an Lc it does not carry.
+        let apdu = self.apdu_buffer.get(..self.rx).ok_or(StatusWords::BadLen)?;
+        let layout = crate::apdu::layout(apdu).map_err(|_| StatusWords::BadLen)?;
+        apdu.get(layout.data_offset..layout.data_offset + layout.data_len)
+            .ok_or(StatusWords::BadLen)
     }
 
     pub fn get(&self, start: usize, end: usize) -> &[u8] {

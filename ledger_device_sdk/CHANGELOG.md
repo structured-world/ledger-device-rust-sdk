@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `app_io_stack` feature: the app runs the C SDK's USB/BLE IO stack itself instead of
   the OS one (the C SDK's `DISABLE_OS_IO_STACK_USE`), for apps that drive an interface
   such as U2F/CTAPHID themselves. `exit_app` stops that stack before leaving.
+- `io_new`: `Comm::next_command_or_event` waits for one event and returns either an
+  application command, handled exactly as `next_command` handles it (BOLOS APDUs and
+  unexpected classes are answered internally), or the event itself, so an application
+  can run periodic work on ticker events between commands.
+- `io_new`, `io_legacy`: APDUs received over NFC (`OS_IO_PACKET_TYPE_NFC_APDU`)
+  reach the application and are answered over NFC.
+- `io_new`: `Command::transport`, `Command::le` and `Command::is_extended` tell
+  the application which transport a command came on and what response it
+  accepts; `Command::header` gives its CLA, INS, P1 and P2.
+- `io_new`: `Comm::send_on` and `CommandResponse::send_on` answer on a given
+  transport, for a command answered after other APDUs were received.
+- `nfc` feature: builds the C SDK's NFC card emulation (`HAVE_NFC`, `lib_nfc`)
+  on Stax, Flex and Apex P, for applications that run the IO stack themselves.
+
+### Fixed
+- `io_new`: an event the IO stack takes without delivering anything (`io_rx`
+  below zero, as for every part but the last of an NFC APDU) is ignored
+  instead of panicking, as the C SDK's loops skip it.
+- `io_new`: command APDUs with an Le field (cases 2 and 4 of ISO/IEC 7816-4,
+  short and extended) are accepted instead of answered `BadLen`. A body of a
+  single `00` still reads as a command without data.
 
 ## [1.41.0] - 2026-10-06
 
@@ -30,10 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `app_storage::capacity`) and its header properties by the `app_storage_settings` and
   `app_storage_data` features. `APP_STORAGE_SIZE` must not shrink between versions of an
   app. Difference from the C SDK: `read` also refuses a range past the capacity.
-- `io_new`: `Comm::next_command_or_event` waits for one event and returns either an
-  application command, handled exactly as `next_command` handles it (BOLOS APDUs and
-  unexpected classes are answered internally), or the event itself, so an application
-  can run periodic work on ticker events between commands.
 
 ### Fixed
 - `nvm`: `AtomicStorage::update` on a storage that was never updated stores the
