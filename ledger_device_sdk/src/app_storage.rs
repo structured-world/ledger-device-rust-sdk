@@ -49,9 +49,13 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use ledger_secure_sdk_sys as sys;
 
+/// `APP_STORAGE_SUCCESS` as the `int32_t` the C functions return: bindgen types the
+/// non-negative define as `u32`, the negative error codes as `i32`.
+const SUCCESS: i32 = sys::APP_STORAGE_SUCCESS as i32;
+
 /// The first status other than success the storage initialization reported since the
 /// application started, until [`take_init_status`] takes it.
-static INIT_STATUS: AtomicI32 = AtomicI32::new(sys::APP_STORAGE_SUCCESS);
+static INIT_STATUS: AtomicI32 = AtomicI32::new(SUCCESS);
 
 /// Overrides the C SDK's weak hook (`lib_standard_app/app_storage.c`), which every storage
 /// initialization calls with the status it found.
@@ -60,9 +64,7 @@ extern "C" fn app_storage_callback(status: i32) {
     // An initialization repeated after an IO reset finds the storage it already reset and
     // reports success: the status it found first is kept. Load and store rather than a
     // compare-exchange, which ARMv6-M lacks; the hook runs on the only thread.
-    if status != sys::APP_STORAGE_SUCCESS
-        && INIT_STATUS.load(Ordering::Relaxed) == sys::APP_STORAGE_SUCCESS
-    {
+    if status != SUCCESS && INIT_STATUS.load(Ordering::Relaxed) == SUCCESS {
         INIT_STATUS.store(status, Ordering::Relaxed);
     }
 }
@@ -80,9 +82,9 @@ extern "C" fn app_storage_callback(status: i32) {
 /// one this is always `Ok(())`.
 pub fn take_init_status() -> Result<(), AppStorageError> {
     let status = INIT_STATUS.load(Ordering::Relaxed);
-    INIT_STATUS.store(sys::APP_STORAGE_SUCCESS, Ordering::Relaxed);
+    INIT_STATUS.store(SUCCESS, Ordering::Relaxed);
     match status {
-        sys::APP_STORAGE_SUCCESS => Ok(()),
+        SUCCESS => Ok(()),
         other => Err(AppStorageError::from(other)),
     }
 }
@@ -313,7 +315,7 @@ mod tests {
 
     /// Forgets whatever the start of this test application found.
     fn clear_init_status() {
-        INIT_STATUS.store(sys::APP_STORAGE_SUCCESS, Ordering::Relaxed);
+        INIT_STATUS.store(SUCCESS, Ordering::Relaxed);
     }
 
     const DATA_OFFSET: usize =
@@ -342,7 +344,7 @@ mod tests {
         assert_eq!(write(&[1, 2, 3], 0), Ok(()));
         overwrite_raw(DATA_OFFSET, &[9]);
         assert_eq!(init(), sys::APP_STORAGE_ERR_CORRUPTED);
-        assert_eq!(init(), sys::APP_STORAGE_SUCCESS);
+        assert_eq!(init(), SUCCESS);
         assert_eq!(take_init_status(), Err(AppStorageError::Corrupted));
     }
 
@@ -354,7 +356,7 @@ mod tests {
         overwrite_raw(0, &[0u8; DATA_OFFSET]);
         assert_eq!(init(), sys::APP_STORAGE_ERR_INVALID_HEADER);
         assert_eq!(take_init_status(), Err(AppStorageError::InvalidHeader));
-        assert_eq!(init(), sys::APP_STORAGE_SUCCESS);
+        assert_eq!(init(), SUCCESS);
         assert_eq!(take_init_status(), Ok(()));
     }
 
