@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `debug_over_usb` feature: PRINTF over a USB CDC interface, which only an app-side IO 
   stack exposes 
 
+- `app_storage_init()` declared with the `app_storage` feature
+
 ### Changed
 - `exit_app` stops the app's IO stack (`os_io_stop`) before `os_sched_exit` with
   `app_io_stack`

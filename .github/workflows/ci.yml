@@ -125,6 +125,17 @@ jobs:
     steps:
       - name: Clone
         uses: actions/checkout@v6
+      # The storage initialization status needs a C SDK whose app_storage_init() calls
+      # app_storage_callback() (LedgerHQ/ledger-secure-sdk#1744), which no released C SDK has:
+      # the image's own C SDK (v27.1.2, API level 27) with that change on top, pinned by commit.
+      - name: C SDK with app_storage_callback
+        env:
+          C_SDK_COMMIT: 0190c5022297bb0d25ff943f24c9c6eff66e5bc0
+        run: |
+          git init -q /tmp/c_sdk
+          git -C /tmp/c_sdk fetch -q --depth 1 https://github.com/structured-world/ledger-secure-sdk.git "$C_SDK_COMMIT"
+          git -C /tmp/c_sdk checkout -q --detach FETCH_HEAD
+          echo "LEDGER_SDK_PATH=/tmp/c_sdk" >> "$GITHUB_ENV"
       - name: Application storage unit tests
         working-directory: ledger_device_sdk
         run: |
