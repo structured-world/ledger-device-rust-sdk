@@ -14,9 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `debug_over_usb` feature: PRINTF over a USB CDC interface, which only an app-side IO 
   stack exposes 
 
+- `app_storage_init()` declared with the `app_storage` feature
+
 ### Changed
 - `exit_app` stops the app's IO stack (`os_io_stop`) before `os_sched_exit` with
   `app_io_stack`
+- `c_main` initializes the application storage for a standalone start only; Exchange's
+  `SIGN_TRANSACTION` initializes it in `ledger_device_sdk`'s `sign_tx_params()`
 
 ## [1.17.0] - 2026-10-06
 

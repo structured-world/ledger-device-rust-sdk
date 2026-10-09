@@ -6,8 +6,11 @@
 //! storage the OS is meant to keep across application updates; data kept in `.nvm_data`
 //! statics is not.
 //!
-//! The storage is initialized when the application starts: an uninitialized or corrupted
-//! storage gets a fresh, empty header. Its capacity, [`capacity`], is set at build time by
+//! The storage is initialized when the application starts, and for Exchange's
+//! `SIGN_TRANSACTION` once the transaction parameters are copied, as the C SDK's
+//! `common_app_init()` does: an uninitialized or corrupted storage gets a fresh, empty header,
+//! and [`take_init_status`] tells a corrupted one, whose data is lost, from a first start.
+//! Its capacity, [`capacity`], is set at build time by
 //! the `APP_STORAGE_SIZE` environment variable (480 bytes by default). The storage outlives
 //! the version that wrote it, so `APP_STORAGE_SIZE` must not shrink from one version of an
 //! application to the next.
@@ -18,13 +21,10 @@
 //! unencrypted: do not keep secrets here. The content may have been written by an older
 //! version of the application, so check [`data_version`] before trusting its format.
 //!
-//! # Differences from the C SDK
+//! # Difference from the C SDK
 //!
-//! - [`read`] also refuses a range that ends beyond [`capacity`]; the C SDK checks it only
-//!   against the data size in the header.
-//! - The storage is initialized for a standalone start and for Exchange's
-//!   `SIGN_TRANSACTION`, as `common_app_init()` does, but before the coin application copies
-//!   the transaction parameters rather than after.
+//! [`read`] also refuses a range that ends beyond [`capacity`]; the C SDK checks it only
+//! against the data size in the header.
 //!
 //! This module is only available with the `app_storage` Cargo feature. The
 //! `app_storage_settings` and `app_storage_data` features set the matching
@@ -45,7 +45,47 @@
 //! app_storage::increment_data_version();
 //! ```
 
+use core::sync::atomic::{AtomicI32, Ordering};
+
 use ledger_secure_sdk_sys as sys;
+
+/// The first status other than success the storage initialization reported since the
+/// application started, until [`take_init_status`] takes it.
+static INIT_STATUS: AtomicI32 = AtomicI32::new(sys::APP_STORAGE_SUCCESS);
+
+/// Overrides the C SDK's weak hook (`lib_standard_app/app_storage.c`), which every storage
+/// initialization calls with the status it found.
+#[unsafe(no_mangle)]
+extern "C" fn app_storage_callback(status: i32) {
+    // An initialization repeated after an IO reset finds the storage it already reset and
+    // reports success: the status it found first is kept. Load and store rather than a
+    // compare-exchange, which ARMv6-M lacks; the hook runs on the only thread.
+    if status != sys::APP_STORAGE_SUCCESS
+        && INIT_STATUS.load(Ordering::Relaxed) == sys::APP_STORAGE_SUCCESS
+    {
+        INIT_STATUS.store(status, Ordering::Relaxed);
+    }
+}
+
+/// What the storage initialization found when the application started, returned once: later
+/// calls return `Ok(())` until a new start finds the storage invalid again.
+///
+/// `Ok(())` when the storage was intact, [`AppStorageError::InvalidHeader`] on a first start,
+/// with nothing to lose, and [`AppStorageError::Corrupted`] when the storage was damaged: it
+/// was reset to an empty one, the data it held is lost, and the application may offer to
+/// restore it. Taking the status makes the application handle the loss once, even when
+/// `sample_main` runs again after an IO reset within the same start.
+///
+/// Needs a C SDK whose storage initialization calls `app_storage_callback()`; with an older
+/// one this is always `Ok(())`.
+pub fn take_init_status() -> Result<(), AppStorageError> {
+    let status = INIT_STATUS.load(Ordering::Relaxed);
+    INIT_STATUS.store(sys::APP_STORAGE_SUCCESS, Ordering::Relaxed);
+    match status {
+        sys::APP_STORAGE_SUCCESS => Ok(()),
+        other => Err(AppStorageError::from(other)),
+    }
+}
 
 /// Error returned by the storage functions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -243,6 +283,79 @@ mod tests {
         assert_eq!(write(&[0xaa], capacity() - 1), Ok(()));
         assert_eq!(size(), capacity());
         assert_eq!(write(&[0xaa], capacity()), Err(AppStorageError::Overflow));
+    }
+
+    unsafe extern "C" {
+        /// The storage itself (`lib_standard_app/app_storage.c`).
+        static app_storage_real: u8;
+    }
+
+    /// Overwrites the stored bytes from `offset`, which counts from the CRC that starts the
+    /// storage (`app_storage_t`): the way a damaged flash would, behind the CRC's back.
+    fn overwrite_raw(offset: usize, bytes: &[u8]) {
+        // SAFETY: every caller stays within the CRC, the header and the data; nvm_write is the
+        // only way to write the storage.
+        unsafe {
+            let storage = &raw const app_storage_real;
+            sys::nvm_write(
+                storage.add(offset) as *mut core::ffi::c_void,
+                bytes.as_ptr() as *mut core::ffi::c_void,
+                bytes.len() as u32,
+            );
+        }
+    }
+
+    /// Runs the storage initialization again, as the application start does.
+    fn init() -> i32 {
+        // SAFETY: the storage was initialized at start; initializing it again is idempotent.
+        unsafe { sys::app_storage_init() }
+    }
+
+    /// Forgets whatever the start of this test application found.
+    fn clear_init_status() {
+        INIT_STATUS.store(sys::APP_STORAGE_SUCCESS, Ordering::Relaxed);
+    }
+
+    const DATA_OFFSET: usize =
+        core::mem::size_of::<u32>() + core::mem::size_of::<sys::app_storage_header_t>();
+
+    // Data changed behind the CRC is a corruption: the initialization resets the storage and the
+    // status reports the loss once, so the application handles it once.
+    #[test]
+    fn test_app_storage_corruption_is_taken_once() {
+        reset();
+        clear_init_status();
+        assert_eq!(write(&[1, 2, 3], 0), Ok(()));
+        overwrite_raw(DATA_OFFSET, &[9]);
+        assert_eq!(init(), sys::APP_STORAGE_ERR_CORRUPTED);
+        assert_eq!(size(), 0);
+        assert_eq!(take_init_status(), Err(AppStorageError::Corrupted));
+        assert_eq!(take_init_status(), Ok(()));
+    }
+
+    // An initialization repeated after an IO reset finds the storage already reset and reports
+    // success; the loss the first one found is still what the application takes.
+    #[test]
+    fn test_app_storage_repeated_init_keeps_the_loss() {
+        reset();
+        clear_init_status();
+        assert_eq!(write(&[1, 2, 3], 0), Ok(()));
+        overwrite_raw(DATA_OFFSET, &[9]);
+        assert_eq!(init(), sys::APP_STORAGE_ERR_CORRUPTED);
+        assert_eq!(init(), sys::APP_STORAGE_SUCCESS);
+        assert_eq!(take_init_status(), Err(AppStorageError::Corrupted));
+    }
+
+    // A storage that is all zeros was never initialized: a first start, with nothing lost.
+    #[test]
+    fn test_app_storage_first_start_is_not_a_loss() {
+        reset();
+        clear_init_status();
+        overwrite_raw(0, &[0u8; DATA_OFFSET]);
+        assert_eq!(init(), sys::APP_STORAGE_ERR_INVALID_HEADER);
+        assert_eq!(take_init_status(), Err(AppStorageError::InvalidHeader));
+        assert_eq!(init(), sys::APP_STORAGE_SUCCESS);
+        assert_eq!(take_init_status(), Ok(()));
     }
 
     // A read past the capacity is refused whatever size the header claims: the size comes from
