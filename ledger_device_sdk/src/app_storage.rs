@@ -74,12 +74,20 @@ fn stored_status() -> &'static mut AlignedStorage<i32> {
 #[unsafe(no_mangle)]
 extern "C" fn app_storage_callback(status: i32) {
     // A repeated initialization finds the storage it already reset and reports success: the
-    // status found first is kept. Flash is written only to record a status. A write cut short
-    // leaves bytes other than zero (written or erased), which read as a loss, never as success;
-    // a power loss before the write starts is the window after the C SDK's reset, before this
-    // hook, which no representation of the record closes.
+    // status found first is kept. A loss replaces any other recorded status, a first start
+    // whose storage was damaged before the application cleared it included. Flash is written
+    // only to change the record. A write cut short leaves bytes other than zero (written or
+    // erased), which read as a loss, never as success; a power loss before the write starts is
+    // the window after the C SDK's reset, before this hook, which no representation of the
+    // record closes.
     let stored = stored_status();
-    if status != SUCCESS && *stored.get_ref() == SUCCESS {
+    let recorded = *stored.get_ref();
+    let replaces = match status {
+        SUCCESS => false,
+        sys::APP_STORAGE_ERR_CORRUPTED => recorded != sys::APP_STORAGE_ERR_CORRUPTED,
+        _ => recorded == SUCCESS,
+    };
+    if replaces {
         stored.update(&status);
     }
 }
@@ -387,6 +395,22 @@ mod tests {
         clear_init_status();
         assert_eq!(init(), SUCCESS);
         assert_eq!(init_status(), Ok(()));
+    }
+
+    // A first start whose status the application has not cleared yet, then a storage the
+    // application had started to write and found damaged: the loss replaces the first start,
+    // which would otherwise hide it.
+    #[test]
+    fn test_app_storage_corruption_replaces_an_uncleared_first_start() {
+        reset();
+        clear_init_status();
+        overwrite_raw(0, &[0u8; DATA_OFFSET]);
+        assert_eq!(init(), sys::APP_STORAGE_ERR_INVALID_HEADER);
+        assert_eq!(write(&[1, 2, 3], 0), Ok(()));
+        overwrite_raw(DATA_OFFSET, &[9]);
+        assert_eq!(init(), sys::APP_STORAGE_ERR_CORRUPTED);
+        assert_eq!(init_status(), Err(AppStorageError::Corrupted));
+        clear_init_status();
     }
 
     // A read past the capacity is refused whatever size the header claims: the size comes from
