@@ -366,7 +366,10 @@ int c_main(int arg0) {
         // reset retries. A standalone start only, here after BSS is reset so that
         // app_storage_callback() may record into the application's memory: Exchange's
         // SIGN_TRANSACTION initializes it in sign_tx_params() once BSS is reset there, as
-        // lib_standard_app/main.c does; the other library calls never touch it.
+        // lib_standard_app/main.c does; the other library calls never touch it. Not here for
+        // a library call: its BSS is still the caller's, which the hook would write into. A
+        // handler that skips sign_tx_params() also skips the BSS reset and c_boot_std(), so
+        // that is the one point after which the storage can be used.
         if (arg0 == 0)
           app_storage_init();
 #endif  // HAVE_APP_STORAGE
