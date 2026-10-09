@@ -74,7 +74,10 @@ fn stored_status() -> &'static mut AlignedStorage<i32> {
 #[unsafe(no_mangle)]
 extern "C" fn app_storage_callback(status: i32) {
     // A repeated initialization finds the storage it already reset and reports success: the
-    // status found first is kept. Flash is written only to record a status.
+    // status found first is kept. Flash is written only to record a status. A write cut short
+    // leaves bytes other than zero (written or erased), which read as a loss, never as success;
+    // a power loss before the write starts is the window after the C SDK's reset, before this
+    // hook, which no representation of the record closes.
     let stored = stored_status();
     if status != SUCCESS && *stored.get_ref() == SUCCESS {
         stored.update(&status);
@@ -311,8 +314,9 @@ mod tests {
     }
 
     unsafe extern "C" {
-        /// The storage itself (`lib_standard_app/app_storage.c`).
-        static app_storage_real: u8;
+        /// The storage itself (`lib_standard_app/app_storage.c`), in flash. Declared as a
+        /// function, as `_nvm_data_start` is: a static would be read through r9, as RAM.
+        fn app_storage_real();
     }
 
     /// Overwrites the stored bytes from `offset`, which counts from the CRC that starts the
@@ -322,8 +326,7 @@ mod tests {
         // only way to write the storage. Its link address is translated with pic(), as the C
         // SDK does (PIC(&app_storage_real)): the application runs relocated.
         unsafe {
-            let storage =
-                sys::pic(&raw const app_storage_real as *mut core::ffi::c_void) as *mut u8;
+            let storage = sys::pic(app_storage_real as *mut core::ffi::c_void) as *mut u8;
             sys::nvm_write(
                 storage.add(offset) as *mut core::ffi::c_void,
                 bytes.as_ptr() as *mut core::ffi::c_void,
