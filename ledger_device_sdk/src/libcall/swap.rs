@@ -713,14 +713,6 @@ pub fn sign_tx_params<
         c_boot_std();
     }
 
-    // The application storage is initialized here, as the C SDK's common_app_init() does for
-    // SIGN_TRANSACTION: after the parameters are copied and BSS is reset, so that the status
-    // app_storage_callback() records stays in the application's memory.
-    #[cfg(feature = "app_storage")]
-    unsafe {
-        ledger_secure_sdk_sys::app_storage_init();
-    }
-
     #[cfg(any(
         target_os = "stax",
         target_os = "flex",

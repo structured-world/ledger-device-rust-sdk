@@ -6,11 +6,8 @@
 //! storage the OS is meant to keep across application updates; data kept in `.nvm_data`
 //! statics is not.
 //!
-//! The storage is initialized when the application starts, and for Exchange's
-//! `SIGN_TRANSACTION` in `libcall::swap::sign_tx_params` once the
-//! transaction parameters are copied and BSS is reset, as the C SDK's `common_app_init()`
-//! does: in a library call BSS belongs to the caller until then, and the initialization records
-//! its status there. An uninitialized or corrupted storage gets a fresh, empty header, and
+//! The storage is initialized when the application starts, also for Exchange's
+//! `SIGN_TRANSACTION`: an uninitialized or corrupted storage gets a fresh, empty header, and
 //! [`init_status`] tells a corrupted one, whose data is lost, from a first start.
 //! Its capacity, [`capacity`], is set at build time by
 //! the `APP_STORAGE_SIZE` environment variable (480 bytes by default). The storage outlives
@@ -23,10 +20,13 @@
 //! unencrypted: do not keep secrets here. The content may have been written by an older
 //! version of the application, so check [`data_version`] before trusting its format.
 //!
-//! # Difference from the C SDK
+//! # Differences from the C SDK
 //!
-//! [`read`] also refuses a range that ends beyond [`capacity`]; the C SDK checks it only
-//! against the data size in the header.
+//! - [`read`] also refuses a range that ends beyond [`capacity`]; the C SDK checks it only
+//!   against the data size in the header.
+//! - The storage is initialized for a standalone start and for Exchange's
+//!   `SIGN_TRANSACTION`, as `common_app_init()` does, but before the coin application copies
+//!   the transaction parameters rather than after.
 //!
 //! This module is only available with the `app_storage` Cargo feature. The
 //! `app_storage_settings` and `app_storage_data` features set the matching
@@ -47,32 +47,41 @@
 //! app_storage::increment_data_version();
 //! ```
 
-use core::sync::atomic::{AtomicI32, Ordering};
-
 use ledger_secure_sdk_sys as sys;
+
+use crate::NVMData;
+use crate::nvm::{AlignedStorage, SingleStorage};
 
 /// `APP_STORAGE_SUCCESS` as the `int32_t` the C functions return: bindgen types the
 /// non-negative define as `u32`, the negative error codes as `i32`.
 const SUCCESS: i32 = sys::APP_STORAGE_SUCCESS as i32;
 
-/// The first status other than success the storage initialization reported since the
-/// application started, until [`clear_init_status`].
-static INIT_STATUS: AtomicI32 = AtomicI32::new(SUCCESS);
+/// The first status other than success a storage initialization reported, until
+/// [`clear_init_status`]; success in a fresh install. In NVM rather than RAM: an IO reset
+/// during Exchange's `SIGN_TRANSACTION` runs `sign_tx_params` again, which resets BSS, and its
+/// repeated initialization finds the storage already reset.
+#[unsafe(link_section = ".nvm_data")]
+static mut INIT_STATUS: NVMData<AlignedStorage<i32>> = NVMData::new(AlignedStorage::new(SUCCESS));
+
+fn stored_status() -> &'static mut AlignedStorage<i32> {
+    // SAFETY: the application runs on one thread, and every caller drops the reference before
+    // returning, so no two of them are alive at once.
+    unsafe { (*(&raw mut INIT_STATUS)).get_mut() }
+}
 
 /// Overrides the C SDK's weak hook (`lib_standard_app/app_storage.c`), which every storage
 /// initialization calls with the status it found.
 #[unsafe(no_mangle)]
 extern "C" fn app_storage_callback(status: i32) {
-    // An initialization repeated after an IO reset finds the storage it already reset and
-    // reports success: the status it found first is kept. Load and store rather than a
-    // compare-exchange, which ARMv6-M lacks; the hook runs on the only thread.
-    if status != SUCCESS && INIT_STATUS.load(Ordering::Relaxed) == SUCCESS {
-        INIT_STATUS.store(status, Ordering::Relaxed);
+    // A repeated initialization finds the storage it already reset and reports success: the
+    // status found first is kept. Flash is written only to record a status.
+    let stored = stored_status();
+    if status != SUCCESS && *stored.get_ref() == SUCCESS {
+        stored.update(&status);
     }
 }
 
-/// What the storage initialization found when the application started, until
-/// [`clear_init_status`].
+/// What a storage initialization found, until [`clear_init_status`].
 ///
 /// `Ok(())` when the storage was intact. [`AppStorageError::Corrupted`] when it was damaged:
 /// it was reset to an empty one, the data it held is lost, and the application may offer to
@@ -80,23 +89,27 @@ extern "C" fn app_storage_callback(status: i32) {
 /// most likely a first start with nothing to lose; the data is not scanned, so damage that
 /// zeroed all of these over written data reads the same.
 ///
-/// The status stays until the application clears it, so `sample_main` running again after an
-/// IO reset within the same start, before the application finished handling a loss, still
-/// sees it. A new start begins with the status its own initialization finds.
+/// The status is kept in NVM until the application clears it: `sample_main` running again
+/// after an IO reset, a status found during Exchange's `SIGN_TRANSACTION`, and the next start
+/// still see it. Installing a new version of the application starts over with `Ok(())`.
 ///
 /// Needs a C SDK whose storage initialization calls `app_storage_callback()`; with an older
 /// one this is always `Ok(())`.
 pub fn init_status() -> Result<(), AppStorageError> {
-    match INIT_STATUS.load(Ordering::Relaxed) {
+    match *stored_status().get_ref() {
         SUCCESS => Ok(()),
         other => Err(AppStorageError::from(other)),
     }
 }
 
-/// Marks the status [`init_status`] reports as handled: a restore finished or the user declined
-/// it. Until the next start, [`init_status`] returns `Ok(())`.
+/// Marks the status [`init_status`] reports as handled: a restore finished, the user declined
+/// it, or a first start was set up. [`init_status`] then returns `Ok(())` until an
+/// initialization finds the storage invalid again.
 pub fn clear_init_status() {
-    INIT_STATUS.store(SUCCESS, Ordering::Relaxed);
+    let stored = stored_status();
+    if *stored.get_ref() != SUCCESS {
+        stored.update(&SUCCESS);
+    }
 }
 
 /// Error returned by the storage functions.
@@ -306,9 +319,11 @@ mod tests {
     /// storage (`app_storage_t`): the way a damaged flash would, behind the CRC's back.
     fn overwrite_raw(offset: usize, bytes: &[u8]) {
         // SAFETY: every caller stays within the CRC, the header and the data; nvm_write is the
-        // only way to write the storage.
+        // only way to write the storage. Its link address is translated with pic(), as the C
+        // SDK does (PIC(&app_storage_real)): the application runs relocated.
         unsafe {
-            let storage = &raw const app_storage_real;
+            let storage =
+                sys::pic(&raw const app_storage_real as *mut core::ffi::c_void) as *mut u8;
             sys::nvm_write(
                 storage.add(offset) as *mut core::ffi::c_void,
                 bytes.as_ptr() as *mut core::ffi::c_void,

@@ -19,6 +19,17 @@
 
 #ifdef HAVE_APP_STORAGE
 #include "app_storage_internal.h"
+#include "swap_lib_calls.h"
+
+// Whether this start initializes the storage, as lib_standard_app/main.c does through
+// common_app_init(): a standalone start, and a library call from Exchange to sign a
+// transaction; never for CHECK_ADDRESS or GET_PRINTABLE_AMOUNT.
+static bool app_storage_starts(int arg0) {
+  if (arg0 == 0)
+    return true;
+  const libargs_t *args = (const libargs_t *) arg0;
+  return args->id == 0x100 && args->command == SIGN_TRANSACTION;
+}
 #endif  // HAVE_APP_STORAGE
 
 extern void sample_main(int arg0);
@@ -363,14 +374,8 @@ int c_main(int arg0) {
       TRY {
 #ifdef HAVE_APP_STORAGE
         // Writes the storage header on first start or after corruption; idempotent across IO
-        // reset retries. A standalone start only, here after BSS is reset so that
-        // app_storage_callback() may record into the application's memory: Exchange's
-        // SIGN_TRANSACTION initializes it in sign_tx_params() once BSS is reset there, as
-        // lib_standard_app/main.c does; the other library calls never touch it. Not here for
-        // a library call: its BSS is still the caller's, which the hook would write into. A
-        // handler that skips sign_tx_params() also skips the BSS reset and c_boot_std(), so
-        // that is the one point after which the storage can be used.
-        if (arg0 == 0)
+        // reset retries.
+        if (app_storage_starts(arg0))
           app_storage_init();
 #endif  // HAVE_APP_STORAGE
         // if libcall, does not start io and memory allocator
